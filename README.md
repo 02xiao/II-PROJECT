@@ -26,23 +26,27 @@
 
 <img width="203" height="228" alt="image" src="https://github.com/user-attachments/assets/169142ae-d449-4d8f-952c-af4499e0da6d" />
 <img width="202" height="230" alt="image" src="https://github.com/user-attachments/assets/dea1a33f-ba43-4c1e-98c9-1d02fd81e714" />
+
 	
 2.2微调数据的准备与加载
 步骤一：数据准备与加载。本项目选用“SMS Spam Collection”数据集，该数据集包含约5500条被标记为“ham”（正常）或“spam”（垃圾）的短信。
 <img width="363" height="318" alt="image" src="https://github.com/user-attachments/assets/1189aa05-5d3b-4ee0-9945-03b15b1936c6" />
 
+
 数据平衡处理：原始数据存在严重的类别不平衡问题。为避免模型偏向多数类，采用随机下采样策略，从正常短信中随机抽取与垃圾短信相同数量的样本，构建了一个类别均衡的数据集，使其包含每个类别的747个实例。
 	
 数据集划分：将均衡后的数据集按7:1:2的比例划分为训练集、验证集和测试集。
 分词与序列化：由于这些文本消息的长度各不相同，如果我们想将多个训练样本合并到一个批次中，我们将所有消息填充至数据集或批次中最长消息的长度。使用与GPT-2兼容的tiktoken分词器对文本进行编码。为适应模型批处理的需求，对所有文本序列进行填充（Padding），使其长度统一为训练集中最长序列的长度（120个Tokens）。
+
 <img width="415" height="172" alt="image" src="https://github.com/user-attachments/assets/9825e24b-48bf-43b2-85fe-b3d0a3955c8c" />
 
 数据加载器：利用PyTorch的Dataset和DataLoader类，构建了用于模型训练和评估的数据管道。设计的 SpamDataset 类会识别训练数据集中的最长序列，并向其他序列添加填充标记，使其长度与该最长序列相匹配。在实际操作中还需要根据最长的训练序列对验证集和测试集进行了填充，长度超过最长训练样本的验证集和测试集样本会被encoded_text[:self.max_length] 截断。
-<img width="361" height="423" alt="image" src="https://github.com/user-attachments/assets/559c8fcd-86c1-40a2-a7e4-c46ae7b75431" />
 
+<img width="361" height="423" alt="image" src="https://github.com/user-attachments/assets/559c8fcd-86c1-40a2-a7e4-c46ae7b75431" />
 <img width="397" height="291" alt="image" src="https://github.com/user-attachments/assets/8cf2547e-ef1e-4a58-856a-05cf41553b67" />
 
 作为验证步骤，我们遍历数据加载器，确保每个批次包含8个训练样本，其中每个训练样本包含120个标记。我们打印每个数据集中的批次总数如下。
+
 <img width="206" height="56" alt="image" src="https://github.com/user-attachments/assets/679ca1c7-f643-47d4-ad87-ed7fa227e4a3" />
 <img width="196" height="60" alt="image" src="https://github.com/user-attachments/assets/77f6072d-198b-4bd2-8bb7-d15a9c366bec" />
 
@@ -51,14 +55,16 @@
 加载预训练模型：加载拥有1.24亿参数的GPT-2 Small模型及其预训练权重。
 参数冻结：默认情况下，模型的所有参数（requires_grad=False）均被冻结，以防止在微调过程中破坏其已有的语言知识。
 修改分类头：GPT-2的原始输出层（out_head）用于预测词汇表中的下一个词。为适配二元分类任务，将其替换为一个新的线性层，输入维度为模型的嵌入维度（768），输出维度为类别数（2）。
+
 <img width="403" height="314" alt="image" src="https://github.com/user-attachments/assets/72dc78d8-5553-4d87-93ac-55f6490500aa" />
 
 选择性解冻：为提升性能，本项目解冻了最后一个Transformer块（trf_blocks[-1]）及最终的层归一化模块（final_norm）的参数。最后一个Transformer块的输出包含了对整个输入序列最丰富的语义信息，对其进行微调能更好地适应新任务。我们替换输出层，它原本将层输入映射到 50257 维（词汇表的大小）。由于我们对模型进行微调是为了进行二元分类（预测两类：“垃圾邮件”和“非垃圾邮件”），我们可以像下面这样替换输出层，该输出层默认情况下是可训练的。
+我也使最后一个 Transformer 模块和连接最后一个 Transformer 模块与输出层的最终 LayerNorm 模块可训练。
 
-我们也使最后一个 Transformer 模块和连接最后一个 Transformer 模块与输出层的最终 LayerNorm 模块可训练。
 <img width="405" height="385" alt="image" src="https://github.com/user-attachments/assets/2311f022-4bb4-41ae-96ed-423e977f93c9" />
 
 GPT类模型使用一种因果注意力掩码，该因果掩码使得当前标记仅关注其当前位置和前一个标记的位置。由于我们向模型输入了一个包含4个输入词元的文本样本，因此输出由 4 个二维输出向量组成。基于因果注意力机制，第 4 个（最后一个）词元包含的信息量最大，因为它是唯一一个包含了所有其他词元信息的词元。因此，我们对最后一个标记尤为感兴趣，我们将对其进行微调，以用于垃圾邮件分类任务。
+
 <img width="404" height="409" alt="image" src="https://github.com/user-attachments/assets/d6e3575a-aa90-47e9-81ad-f0610c27a543" />
 
 2.3模型训练与评估
@@ -68,6 +74,7 @@ GPT类模型使用一种因果注意力掩码，该因果掩码使得当前标�
 <img width="415" height="434" alt="image" src="https://github.com/user-attachments/assets/bfcdf256-5a3c-43c9-967f-2248c658b0d2" />
 
 我使用 matplotlib 绘制训练集和验证集的损失函数图。
+
 <img width="203" height="120" alt="image" src="https://github.com/user-attachments/assets/aaa2489a-5889-4b4d-bd6f-b297e6cf639e" />
 <img width="202" height="118" alt="image" src="https://github.com/user-attachments/assets/429f6ec0-54c5-4614-ab32-cca2604d8ee4" />
 
@@ -75,11 +82,16 @@ GPT类模型使用一种因果注意力掩码，该因果掩码使得当前标�
 在每个周期结束后，使用验证集评估模型性能，以监控训练过程并防止过拟合。我们使用准确率作为核心评估指标。其中左图是未对模型进行微调前的不同数据集的分类准确率，右图是对模型微调后的分类准确率。可以发现。不管是训练集、验证集、还是测试集。分类准确率都是有着显著的提升。可见微调对于模型性能有着显著的积极作用。
 	
 实验结果：经过5个周期的微调，模型性能显著提升。训练损失和验证损失均稳定下降，而准确率则稳步上升并最终收敛。在测试集上的最终准确率达到了95.67%，远高于随机基线（50%），证明了微调策略的有效性。
+
 <img width="198" height="45" alt="image" src="https://github.com/user-attachments/assets/e2921d20-6436-4a97-9a2c-1a01d7805798" />
 <img width="192" height="46" alt="image" src="https://github.com/user-attachments/assets/d5afc878-61c2-4f1b-85c3-57abe6adeaef" />
 2.4结果展示
 构建与基于 GPT 的垃圾邮件分类器交互的用户界面。
+
+
 <img width="416" height="240" alt="image" src="https://github.com/user-attachments/assets/bf35af0b-395c-41e5-adb6-cd6355e497a6" />
+
+
 三、心得体会
 3.1 实践中的难点与解决思路
 难点1：如何让模型从零学会语言？通过自监督学习。通过“下一个词预测”这一巧妙的任务设计，模型可以从海量无标签文本中为自己创造出无穷无尽的“（上下文，目标词）”训练样本，从而完成知识的原始积累。
